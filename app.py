@@ -6,7 +6,6 @@ from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
 
 # ---------- TURSO ----------
-# Streamlit Cloud: env dari secrets. Lokal: dari .env.turso
 try:
     TURSO_URL = st.secrets["TURSO_URL"]
     TURSO_TOKEN = st.secrets["TURSO_TOKEN"]
@@ -55,7 +54,7 @@ def _turso_http(sql, params=()):
             args.append({"type": "float", "value": p})
         else:
             args.append({"type": "text", "value": str(p)})
-    
+
     payload = {
         "requests": [
             {"type": "execute", "stmt": {"sql": sql, "args": args}},
@@ -65,11 +64,11 @@ def _turso_http(sql, params=()):
     r = requests.post(url, headers=headers, json=payload, timeout=30)
     r.raise_for_status()
     data = r.json()
-    
+
     result = data["results"][0]
     if result.get("type") == "error":
         raise Exception(result.get("error", {}).get("message", "Turso error"))
-    
+
     resp = result["response"]["result"]
     cols = [c["name"] for c in resp["cols"]]
     rows = []
@@ -79,7 +78,16 @@ def _turso_http(sql, params=()):
 
 
 def q(sql, params=()):
-    return _turso_http(sql, params)
+    """Query Turso + auto-convert kolom angka ke numeric."""
+    df = _turso_http(sql, params)
+    # Auto-convert kolom object yang isinya angka jadi numeric
+    for col in df.columns:
+        if df[col].dtype == object:
+            try:
+                df[col] = pd.to_numeric(df[col], errors="raise")
+            except (ValueError, TypeError):
+                pass
+    return df
 
 
 # ---------- SIDEBAR ----------
@@ -231,8 +239,10 @@ elif menu == "📅 Transaksi":
             use_container_width=True, hide_index=True,
         )
         c1, c2 = st.columns(2)
-        c1.metric("Total Masuk", rp(df[df["jenis"] == "pemasukan"]["jumlah"].sum()))
-        c2.metric("Total Keluar", rp(df[df["jenis"] == "pengeluaran"]["jumlah"].sum()))
+        total_masuk = df[df["jenis"] == "pemasukan"]["jumlah"].sum() if "jumlah" in df.columns else 0
+        total_keluar = df[df["jenis"] == "pengeluaran"]["jumlah"].sum() if "jumlah" in df.columns else 0
+        c1.metric("Total Masuk", rp(total_masuk))
+        c2.metric("Total Keluar", rp(total_keluar))
         st.caption(f"{len(df)} transaksi")
     else:
         st.info("Tidak ada transaksi.")
@@ -263,6 +273,8 @@ elif menu == "💰 Akun Bank":
             ),
             use_container_width=True, hide_index=True,
         )
+    else:
+        st.info("Belum ada akun.")
 
 
 # ---------- COA ----------
@@ -280,6 +292,8 @@ elif menu == "📒 COA":
                     ),
                     use_container_width=True, hide_index=True,
                 )
+    else:
+        st.info("COA kosong.")
 
 
 # ---------- JURNAL ----------
@@ -294,8 +308,8 @@ elif menu == "📗 Jurnal":
         LIMIT 200
     """)
     if len(df) > 0:
-        df["Debit"] = df["debit"].apply(lambda x: rp(x) if x else "-")
-        df["Kredit"] = df["kredit"].apply(lambda x: rp(x) if x else "-")
+        df["Debit"] = df["debit"].apply(lambda x: rp(x) if x and x != 0 else "-")
+        df["Kredit"] = df["kredit"].apply(lambda x: rp(x) if x and x != 0 else "-")
         st.dataframe(
             df[["id", "tanggal", "deskripsi", "akun", "Debit", "Kredit"]].rename(
                 columns={"id": "JID", "tanggal": "Tgl", "deskripsi": "Keterangan", "akun": "Akun"}
@@ -320,10 +334,12 @@ elif menu == "📊 Neraca Saldo":
     rows = []
     td = tk = 0
     for _, r in df.iterrows():
+        tdebit = float(r["tdebit"]) if r["tdebit"] is not None else 0
+        tkredit = float(r["tkredit"]) if r["tkredit"] is not None else 0
         if r["saldo_normal"] == "debit":
-            d, k = r["tdebit"] - r["tkredit"], 0
+            d, k = tdebit - tkredit, 0
         else:
-            d, k = 0, r["tkredit"] - r["tdebit"]
+            d, k = 0, tkredit - tdebit
         if d == 0 and k == 0:
             continue
         rows.append({"Kode": r["kode"], "Nama": r["nama"], "Debit": rp(d), "Kredit": rp(k)})
@@ -334,7 +350,7 @@ elif menu == "📊 Neraca Saldo":
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Debit", rp(td))
         c2.metric("Total Kredit", rp(tk))
-        if td == tk:
+        if int(td) == int(tk):
             c3.success("✅ Balance")
         else:
             c3.error(f"⚠️ Selisih {rp(abs(td - tk))}")
