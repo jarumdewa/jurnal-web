@@ -250,6 +250,208 @@ if menu == "🏠 Dashboard":
         st.exception(e)
 
 
+
+# ---------- INPUT TRANSAKSI ----------
+elif menu == "✏️ Input Transaksi":
+    st.title("✏️ Input Transaksi Baru")
+    st.caption("Catat pemasukan / pengeluaran / piutang manual")
+
+    try:
+        df_ak = q("SELECT id, kode, nama FROM akun ORDER BY id")
+        akun_list = [("", "-- Tanpa Akun --")] + [
+            (str(r["id"]), f"@{r['kode']} — {r['nama']}")
+            for _, r in df_ak.iterrows()
+        ]
+    except Exception:
+        akun_list = [("", "-- Tanpa Akun --")]
+
+    with st.form("form_transaksi", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            tgl = st.date_input("Tanggal", value=date.today())
+            jenis = st.selectbox("Jenis", ["pengeluaran", "pemasukan", "piutang"])
+        with col2:
+            kategori = st.selectbox(
+                "Kategori",
+                ["makanan", "minuman", "transport", "belanja",
+                 "kesehatan", "hiburan", "tagihan", "penjualan",
+                 "operasional", "lainnya"],
+            )
+            akun_id = st.selectbox(
+                "Akun Bank",
+                options=[k for k, _ in akun_list],
+                format_func=lambda x: dict(akun_list)[x],
+            )
+
+        deskripsi = st.text_input("Deskripsi", placeholder="cth: makan siang tim")
+        jumlah_str = st.text_input("Jumlah (Rp)", placeholder="cth: 50000")
+
+        submit = st.form_submit_button("Simpan")
+
+    if submit:
+        try:
+            if not deskripsi or not jumlah_str:
+                st.error("Deskripsi & jumlah wajib diisi")
+            else:
+                jumlah = int(jumlah_str.replace(".", "").replace(",", ""))
+                akun_val = int(akun_id) if akun_id else None
+                _turso_exec(
+                    "INSERT INTO transaksi (user_id, tanggal, jenis, kategori, deskripsi, jumlah, akun_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (1, tgl.isoformat(), jenis, kategori, deskripsi, jumlah, akun_val),
+                )
+                st.success(f"Tersimpan: {jenis} {rp(jumlah)} - {deskripsi}")
+                import time
+                time.sleep(1)
+                st.rerun()
+        except Exception as e:
+            st.error(f"Gagal simpan: {e}")
+
+    st.markdown("---")
+    st.caption("Untuk input massal atau via foto bon, tetap pakai bot Telegram")
+
+
+# ---------- KELOLA AKUN ----------
+elif menu == "🏦 Kelola Akun":
+    st.title("🏦 Kelola Akun Bank / Rekening")
+
+    with st.expander("Tambah Akun Baru", expanded=False):
+        with st.form("form_akun", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                kode = st.text_input("Kode", placeholder="cth: bca-762")
+                nama = st.text_input("Nama", placeholder="cth: BCA David")
+            with col2:
+                jenis_ak = st.selectbox("Jenis", ["bank", "tabungan", "kartu_kredit", "cash"])
+                saldo_awal_str = st.text_input("Saldo Awal", value="0")
+            submit_ak = st.form_submit_button("Tambah Akun")
+
+        if submit_ak:
+            try:
+                if not kode or not nama:
+                    st.error("Kode & nama wajib diisi")
+                else:
+                    saldo_awal = int(saldo_awal_str.replace(".", "").replace(",", "") or 0)
+                    _turso_exec(
+                        "INSERT INTO akun (user_id, kode, nama, jenis, saldo_awal) VALUES (?, ?, ?, ?, ?)",
+                        (1, kode.lower(), nama, jenis_ak, saldo_awal),
+                    )
+                    st.success(f"Akun @{kode} ditambahkan")
+                    import time
+                    time.sleep(1)
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Gagal: {e}")
+
+    st.subheader("Daftar Akun")
+    df_ak = q("""
+        SELECT a.id, a.kode, a.nama, a.jenis, a.saldo_awal,
+            COALESCE(SUM(CASE WHEN t.jenis='pemasukan' AND t.akun_id=a.id THEN t.jumlah END),0) AS masuk,
+            COALESCE(SUM(CASE WHEN t.jenis='pengeluaran' AND t.akun_id=a.id THEN t.jumlah END),0) AS keluar
+        FROM akun a
+        LEFT JOIN transaksi t ON t.akun_id = a.id
+        GROUP BY a.id ORDER BY a.id
+    """)
+    if len(df_ak) > 0:
+        df_ak["saldo"] = df_ak["saldo_awal"] + df_ak["masuk"] - df_ak["keluar"]
+        for _, r in df_ak.iterrows():
+            c1, c2, c3 = st.columns([3, 2, 1])
+            with c1:
+                st.write(f"**@{r['kode']}** - {r['nama']} ({r['jenis']})")
+            with c2:
+                st.write(f"Saldo: **{rp(r['saldo'])}**")
+            with c3:
+                if st.button("Hapus", key=f"del_akun_{r['id']}"):
+                    try:
+                        _turso_exec("DELETE FROM akun WHERE id=?", (int(r["id"]),))
+                        st.success(f"Akun @{r['kode']} dihapus")
+                        import time
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Gagal: {e}")
+
+
+# ---------- INPUT JURNAL ----------
+elif menu == "📝 Input Jurnal":
+    st.title("📝 Input Jurnal Double-Entry")
+    st.caption("Tiap baris = debit ATAU kredit (isi salah satu)")
+
+    try:
+        df_coa = q("SELECT kode, nama FROM coa ORDER BY kode")
+        coa_list = [(str(r["kode"]), f"{r['kode']} - {r['nama']}") for _, r in df_coa.iterrows()]
+    except Exception:
+        coa_list = []
+
+    with st.form("form_jurnal", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            tgl_j = st.date_input("Tanggal", value=date.today())
+        with col2:
+            desk_j = st.text_input("Deskripsi", placeholder="cth: jual exosome")
+
+        st.markdown("**Baris Jurnal** (minimal 2 baris)")
+        baris = []
+        for i in range(4):
+            c1, c2, c3 = st.columns([3, 2, 2])
+            with c1:
+                kode_j = st.selectbox(
+                    f"Akun #{i+1}",
+                    options=[""] + [k for k, _ in coa_list],
+                    format_func=lambda x: dict(coa_list).get(x, "-- pilih --") if x else "-- pilih --",
+                    key=f"j_coa_{i}",
+                )
+            with c2:
+                debit_str = st.text_input(f"Debit #{i+1}", value="", key=f"j_d_{i}")
+            with c3:
+                kredit_str = st.text_input(f"Kredit #{i+1}", value="", key=f"j_k_{i}")
+            baris.append((kode_j, debit_str, kredit_str))
+
+        submit_j = st.form_submit_button("Posting Jurnal")
+
+    if submit_j:
+        try:
+            lines = []
+            for kode_j, d_str, k_str in baris:
+                if not kode_j:
+                    continue
+                d = int(d_str.replace(".", "").replace(",", "") or 0)
+                k = int(k_str.replace(".", "").replace(",", "") or 0)
+                if d > 0 and k > 0:
+                    st.error(f"Baris {kode_j}: isi debit ATAU kredit saja")
+                    st.stop()
+                if d == 0 and k == 0:
+                    continue
+                lines.append((kode_j, d, k))
+
+            if len(lines) < 2:
+                st.error("Minimal 2 baris")
+                st.stop()
+
+            total_d = sum(l[1] for l in lines)
+            total_k = sum(l[2] for l in lines)
+            if total_d != total_k:
+                st.error(f"Tidak balance: Debit {rp(total_d)} != Kredit {rp(total_k)}")
+                st.stop()
+
+            _turso_exec(
+                "INSERT INTO jurnal (user_id, tanggal, deskripsi) VALUES (?, ?, ?)",
+                (1, tgl_j.isoformat(), desk_j),
+            )
+            df_last = q("SELECT id FROM jurnal ORDER BY id DESC LIMIT 1")
+            jid = int(df_last["id"][0])
+            for kode_j, d, k in lines:
+                _turso_exec(
+                    "INSERT INTO jurnal_detail (jurnal_id, coa_kode, debit, kredit) VALUES (?, ?, ?, ?)",
+                    (jid, kode_j, d, k),
+                )
+            st.success(f"Jurnal #{jid} diposting (balance {rp(total_d)})")
+            import time
+            time.sleep(1)
+            st.rerun()
+        except Exception as e:
+            st.error(f"Gagal: {e}")
+
+
 # ---------- TRANSAKSI ----------
 elif menu == "📅 Transaksi":
     st.title("📅 Semua Transaksi")
