@@ -77,16 +77,19 @@ def _turso_http(sql, params=()):
     return pd.DataFrame(rows, columns=cols)
 
 
+NUMERIC_COLS = {
+    "id", "user_id", "akun_id", "akun_lawan_id", "jurnal_id",
+    "jumlah", "saldo_awal", "masuk", "keluar", "debit", "kredit",
+    "total", "tdebit", "tkredit",
+}
+
+
 def q(sql, params=()):
-    """Query Turso + auto-convert kolom angka ke numeric."""
+    """Query Turso + konversi kolom angka ke integer."""
     df = _turso_http(sql, params)
-    # Auto-convert kolom object yang isinya angka jadi numeric
     for col in df.columns:
-        if df[col].dtype == object:
-            try:
-                df[col] = pd.to_numeric(df[col], errors="raise")
-            except (ValueError, TypeError):
-                pass
+        if col in NUMERIC_COLS:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
     return df
 
 
