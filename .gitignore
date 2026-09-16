@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+.env
+.env.turso
+keuangan.db
+streamlit.log
+ngrok.log
+*.log
+.DS_Store
