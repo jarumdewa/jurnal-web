@@ -84,6 +84,41 @@ NUMERIC_COLS = {
 }
 
 
+
+
+def _turso_exec(sql, params=()):
+    """Execute INSERT/UPDATE/DELETE ke Turso. Return True kalau sukses."""
+    url = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+    headers = {
+        "Authorization": f"Bearer {TURSO_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    args = []
+    for p in params:
+        if p is None:
+            args.append({"type": "null"})
+        elif isinstance(p, int):
+            args.append({"type": "integer", "value": str(p)})
+        elif isinstance(p, float):
+            args.append({"type": "float", "value": p})
+        else:
+            args.append({"type": "text", "value": str(p)})
+
+    payload = {
+        "requests": [
+            {"type": "execute", "stmt": {"sql": sql, "args": args}},
+            {"type": "close"},
+        ]
+    }
+    r = requests.post(url, headers=headers, json=payload, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    result = data["results"][0]
+    if result.get("type") == "error":
+        raise Exception(result.get("error", {}).get("message", "Turso error"))
+    return True
+
+
 def q(sql, params=()):
     """Query Turso + konversi kolom angka ke integer."""
     df = _turso_http(sql, params)
@@ -100,7 +135,8 @@ st.sidebar.markdown("---")
 
 menu = st.sidebar.radio(
     "Menu",
-    ["🏠 Dashboard", "📅 Transaksi", "💰 Akun Bank", "📒 COA",
+    ["🏠 Dashboard", "✏️ Input Transaksi", "🏦 Kelola Akun", "📝 Input Jurnal",
+     "📅 Transaksi", "💰 Akun Bank", "📒 COA",
      "📗 Jurnal", "📊 Neraca Saldo"],
 )
 
