@@ -19,7 +19,7 @@ if not TURSO_URL or not TURSO_TOKEN:
     st.error("TURSO_URL / TURSO_TOKEN belum di-set. Cek secrets / .env.turso")
     st.stop()
 
-import libsql_experimental as libsql
+import requests
 
 
 # ---------- KONFIG ----------
@@ -38,17 +38,48 @@ def rp(n):
         return "Rp0"
 
 
+def _turso_http(sql, params=()):
+    """Query Turso via HTTP API."""
+    url = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+    headers = {
+        "Authorization": f"Bearer {TURSO_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    args = []
+    for p in params:
+        if p is None:
+            args.append({"type": "null"})
+        elif isinstance(p, int):
+            args.append({"type": "integer", "value": str(p)})
+        elif isinstance(p, float):
+            args.append({"type": "float", "value": p})
+        else:
+            args.append({"type": "text", "value": str(p)})
+    
+    payload = {
+        "requests": [
+            {"type": "execute", "stmt": {"sql": sql, "args": args}},
+            {"type": "close"},
+        ]
+    }
+    r = requests.post(url, headers=headers, json=payload, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    
+    result = data["results"][0]
+    if result.get("type") == "error":
+        raise Exception(result.get("error", {}).get("message", "Turso error"))
+    
+    resp = result["response"]["result"]
+    cols = [c["name"] for c in resp["cols"]]
+    rows = []
+    for row in resp["rows"]:
+        rows.append(tuple(cell.get("value") for cell in row))
+    return pd.DataFrame(rows, columns=cols)
+
+
 def q(sql, params=()):
-    """Query ke Turso, return DataFrame."""
-    conn = libsql.connect(database=TURSO_URL, auth_token=TURSO_TOKEN)
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        cols = [d[0] for d in cur.description] if cur.description else []
-        rows = cur.fetchall()
-        return pd.DataFrame(rows, columns=cols)
-    finally:
-        conn.close()
+    return _turso_http(sql, params)
 
 
 # ---------- SIDEBAR ----------
