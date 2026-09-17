@@ -313,8 +313,14 @@ elif menu == "✏️ Input Transaksi":
 # ---------- KELOLA AKUN ----------
 elif menu == "🏦 Kelola Akun":
     st.title("🏦 Kelola Akun Bank / Rekening")
+    st.caption("Tambah, edit, atau hapus akun")
 
-    with st.expander("Tambah Akun Baru", expanded=False):
+    # Session state untuk edit mode
+    if "edit_akun_id" not in st.session_state:
+        st.session_state.edit_akun_id = None
+
+    # ---------- FORM TAMBAH ----------
+    with st.expander("➕ Tambah Akun Baru", expanded=st.session_state.edit_akun_id is None):
         with st.form("form_akun", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
@@ -323,7 +329,7 @@ elif menu == "🏦 Kelola Akun":
             with col2:
                 jenis_ak = st.selectbox("Jenis", ["bank", "tabungan", "kartu_kredit", "cash"])
                 saldo_awal_str = st.text_input("Saldo Awal", value="0")
-            submit_ak = st.form_submit_button("Tambah Akun")
+            submit_ak = st.form_submit_button("💾 Tambah Akun")
 
         if submit_ak:
             try:
@@ -335,14 +341,60 @@ elif menu == "🏦 Kelola Akun":
                         "INSERT INTO akun (user_id, kode, nama, jenis, saldo_awal) VALUES (?, ?, ?, ?, ?)",
                         (1, kode.lower(), nama, jenis_ak, saldo_awal),
                     )
-                    st.success(f"Akun @{kode} ditambahkan")
+                    st.success(f"✅ Akun @{kode} ditambahkan")
                     import time
                     time.sleep(1)
                     st.rerun()
             except Exception as e:
                 st.error(f"Gagal: {e}")
 
-    st.subheader("Daftar Akun")
+    # ---------- FORM EDIT (muncul kalau ada yang diklik edit) ----------
+    if st.session_state.edit_akun_id is not None:
+        df_edit = q("SELECT id, kode, nama, jenis, saldo_awal FROM akun WHERE id=?",
+                    (st.session_state.edit_akun_id,))
+        if len(df_edit) > 0:
+            r = df_edit.iloc[0]
+            st.markdown("---")
+            st.subheader(f"✏️ Edit Akun: @{r['kode']}")
+            with st.form("form_edit_akun"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    kode_e = st.text_input("Kode", value=str(r["kode"]))
+                    nama_e = st.text_input("Nama", value=str(r["nama"]))
+                with col2:
+                    jenis_opts = ["bank", "tabungan", "kartu_kredit", "cash"]
+                    idx_j = jenis_opts.index(str(r["jenis"])) if str(r["jenis"]) in jenis_opts else 0
+                    jenis_e = st.selectbox("Jenis", jenis_opts, index=idx_j)
+                    saldo_awal_e = st.text_input("Saldo Awal", value=str(int(r["saldo_awal"])))
+
+                cs1, cs2 = st.columns(2)
+                with cs1:
+                    submit_e = st.form_submit_button("💾 Simpan Perubahan")
+                with cs2:
+                    cancel_e = st.form_submit_button("❌ Batal")
+
+            if submit_e:
+                try:
+                    saldo_awal_val = int(saldo_awal_e.replace(".", "").replace(",", "") or 0)
+                    _turso_exec(
+                        "UPDATE akun SET kode=?, nama=?, jenis=?, saldo_awal=? WHERE id=?",
+                        (kode_e.lower(), nama_e, jenis_e, saldo_awal_val, int(r["id"])),
+                    )
+                    st.success(f"✅ Akun @{kode_e} diupdate")
+                    st.session_state.edit_akun_id = None
+                    import time
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Gagal: {e}")
+
+            if cancel_e:
+                st.session_state.edit_akun_id = None
+                st.rerun()
+
+    # ---------- DAFTAR AKUN ----------
+    st.markdown("---")
+    st.subheader("📋 Daftar Akun")
     df_ak = q("""
         SELECT a.id, a.kode, a.nama, a.jenis, a.saldo_awal,
             COALESCE(SUM(CASE WHEN t.jenis='pemasukan' AND t.akun_id=a.id THEN t.jumlah END),0) AS masuk,
@@ -351,24 +403,40 @@ elif menu == "🏦 Kelola Akun":
         LEFT JOIN transaksi t ON t.akun_id = a.id
         GROUP BY a.id ORDER BY a.id
     """)
+
     if len(df_ak) > 0:
         df_ak["saldo"] = df_ak["saldo_awal"] + df_ak["masuk"] - df_ak["keluar"]
+
         for _, r in df_ak.iterrows():
-            c1, c2, c3 = st.columns([3, 2, 1])
-            with c1:
-                st.write(f"**@{r['kode']}** - {r['nama']} ({r['jenis']})")
-            with c2:
-                st.write(f"Saldo: **{rp(r['saldo'])}**")
-            with c3:
-                if st.button("Hapus", key=f"del_akun_{r['id']}"):
-                    try:
-                        _turso_exec("DELETE FROM akun WHERE id=?", (int(r["id"]),))
-                        st.success(f"Akun @{r['kode']} dihapus")
-                        import time
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Gagal: {e}")
+            with st.container():
+                c1, c2, c3, c4, c5 = st.columns([2, 3, 1.5, 2, 1.5])
+                with c1:
+                    st.write(f"**@{r['kode']}**")
+                with c2:
+                    st.write(f"{r['nama']}")
+                with c3:
+                    st.caption(f"{r['jenis']}")
+                with c4:
+                    st.write(f"**{rp(r['saldo'])}**")
+                with c5:
+                    c5a, c5b = st.columns(2)
+                    with c5a:
+                        if st.button("✏️", key=f"edit_{r['id']}", help="Edit"):
+                            st.session_state.edit_akun_id = int(r["id"])
+                            st.rerun()
+                    with c5b:
+                        if st.button("🗑️", key=f"del_{r['id']}", help="Hapus"):
+                            try:
+                                _turso_exec("DELETE FROM akun WHERE id=?", (int(r["id"]),))
+                                st.success(f"Akun @{r['kode']} dihapus")
+                                import time
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Gagal: {e}")
+    else:
+        st.info("Belum ada akun.")
+
 
 
 # ---------- INPUT JURNAL ----------
