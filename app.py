@@ -19,6 +19,7 @@ if not TURSO_URL or not TURSO_TOKEN:
     st.stop()
 
 import requests
+import hashlib
 
 
 # ---------- KONFIG ----------
@@ -128,17 +129,90 @@ def q(sql, params=()):
     return df
 
 
+
+# ---------- AUTH ----------
+def hash_pw(pw):
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+
+def get_users():
+    try:
+        users = st.secrets.get("users", {})
+        return dict(users)
+    except Exception:
+        return {}
+
+
+def check_login(username, password):
+    users = get_users()
+    if username not in users:
+        return None
+    stored = users[username].get("password", "")
+    if hash_pw(password) == stored:
+        return username
+    return None
+
+
+def login_screen():
+    st.markdown("## 🔐 Login Jurnal Jarum Dewa")
+    st.caption("Silakan login untuk mengakses dashboard")
+    with st.form("login_form"):
+        u = st.text_input("Username", placeholder="admin / viewer")
+        p = st.text_input("Password", type="password")
+        ok = st.form_submit_button("🔓 Login")
+    if ok:
+        user = check_login(u, p)
+        if user:
+            st.session_state.logged_in = True
+            st.session_state.username = user
+            st.success(f"Selamat datang, {user}!")
+            import time
+            time.sleep(0.5)
+            st.rerun()
+        else:
+            st.error("❌ Username atau password salah")
+
+
+def logout_button():
+    if st.sidebar.button("🚪 Logout", use_container_width=True):
+        for key in ["logged_in", "username", "role"]:
+            st.session_state.pop(key, None)
+        st.rerun()
+
+
+def is_admin():
+    return st.session_state.get("role") == "admin"
+
+
+# ---------- CEK LOGIN ----------
+if not st.session_state.get("logged_in"):
+    login_screen()
+    st.stop()
+
+username = st.session_state.get("username", "")
+st.session_state["role"] = "admin" if "admin" in username.lower() else "viewer"
+ROLE = st.session_state["role"]
+
+
 # ---------- SIDEBAR ----------
 st.sidebar.title("💼 Jurnal Jarum Dewa")
 st.sidebar.caption("Sistem Akuntansi UMKM")
 st.sidebar.markdown("---")
+st.sidebar.write(f"👤 **{username}**")
+st.sidebar.caption(f"Role: {'🔑 Admin' if ROLE == 'admin' else '👁️ Viewer'}")
+st.sidebar.markdown("---")
 
-menu = st.sidebar.radio(
-    "Menu",
-    ["🏠 Dashboard", "✏️ Input Transaksi", "🏦 Kelola Akun", "📝 Input Jurnal",
-     "📅 Transaksi", "💰 Akun Bank", "📒 COA",
-     "📗 Jurnal", "📊 Neraca Saldo"],
-)
+if ROLE == "admin":
+    menu_list = ["🏠 Dashboard", "✏️ Input Transaksi", "🏦 Kelola Akun", "📝 Input Jurnal",
+                 "📅 Transaksi", "💰 Akun Bank", "📒 COA",
+                 "📗 Jurnal", "📊 Neraca Saldo"]
+else:
+    menu_list = ["🏠 Dashboard", "📅 Transaksi", "💰 Akun Bank", "📒 COA",
+                 "📗 Jurnal", "📊 Neraca Saldo"]
+
+menu = st.sidebar.radio("Menu", menu_list)
+st.sidebar.markdown("---")
+logout_button()
 
 st.sidebar.markdown("---")
 st.sidebar.caption(f"📅 {date.today().isoformat()}")
